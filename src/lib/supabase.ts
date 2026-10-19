@@ -1,8 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import { tr } from '@/lib/i18n';
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// Fallbacks so builds without a .env (e.g. Vercel with no env vars) still work.
+// The anon key is public by design — RLS is what protects the data.
+const DEFAULT_URL = 'https://zbupinbqaheephvweepe.supabase.co';
+const DEFAULT_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpidXBpbmJxYWhlZXBodndlZXBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0MjkyNTYsImV4cCI6MjEwODAwNTI1Nn0.OBykkwAAhou_90K7L6LQod0Ty7_4YHzTjeuz8HHlJbo';
+
+const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || DEFAULT_URL;
+const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) || DEFAULT_ANON_KEY;
 
 if (!url || !anonKey) {
   throw new Error(
