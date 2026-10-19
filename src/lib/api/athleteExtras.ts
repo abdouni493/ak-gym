@@ -98,7 +98,7 @@ export async function debtByAthlete(): Promise<Record<string, number>> {
   for (const r of (subs.data ?? []) as { athlete_id: string; remaining: number }[]) {
     out[r.athlete_id] = (out[r.athlete_id] ?? 0) + Number(r.remaining);
   }
-  // The fees table only exists once supabase_update_v2.sql has run; don't break the page without it.
+  // The fees table only exists once supabase_schema.sql has run; don't break the page without it.
   if (!fees.error) {
     for (const r of (fees.data ?? []) as { athlete_id: string; remaining: number }[]) {
       out[r.athlete_id] = (out[r.athlete_id] ?? 0) + Number(r.remaining);
