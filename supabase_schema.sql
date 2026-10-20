@@ -429,8 +429,10 @@ create table if not exists public.store_settings (
   rc           text,
   logo_url     text,
   currency     text default 'DZD',
+  registration_fee numeric(12,2) not null default 0,
   updated_at   timestamptz not null default now()
 );
+alter table public.store_settings add column if not exists registration_fee numeric(12,2) not null default 0;
 
 
 -- =============================================================================

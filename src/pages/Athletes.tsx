@@ -17,7 +17,7 @@ import {
 import {
   Search, Plus, User, Phone, Users, Zap, CalendarCheck, Wallet, Pencil, Trash2,
   MoreVertical, Dumbbell, UserCheck, AlertCircle, RefreshCw, Eye, HandCoins, UserX,
-  Receipt, X, AlertTriangle, CalendarClock,
+  Receipt, X, AlertTriangle, CalendarClock, BadgeDollarSign,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { formatDZD, cn } from '@/lib/utils';
@@ -35,10 +35,11 @@ import { AthleteDetailsDialog } from '@/components/athletes/AthleteDetailsDialog
 import { PayDebtDialog } from '@/components/athletes/PayDebtDialog';
 import { AttendanceDialog } from '@/components/athletes/AttendanceDialog';
 import { ExtraFeeDialog } from '@/components/athletes/ExtraFeeDialog';
+import { RegistrationFeeDialog } from '@/components/athletes/RegistrationFeeDialog';
 import { athleteState, daysLeft, AthleteState } from '@/components/athletes/athleteStatus';
 
 type DialogKind = 'form' | 'subscription' | 'credit' | 'freeSession' | 'details' | 'pay'
-  | 'presence' | 'absence' | 'fee' | null;
+  | 'presence' | 'absence' | 'fee' | 'regFee' | null;
 type Filter = 'all' | 'active' | 'expiring' | 'expired' | 'debt';
 
 const ALERT_KEY = 'gym.athletes.hiddenAlerts';
@@ -244,6 +245,11 @@ export const Athletes: React.FC = () => {
             {can('athletes', 'edit') && (
               <Button variant="outline" onClick={() => open('fee', null)} className="border-blue-400/40 text-blue-300 hover:bg-blue-500/10">
                 <Receipt className="w-4 h-4 me-2" />{tr('Frais supplémentaire', 'رسوم إضافية')}
+              </Button>
+            )}
+            {can('athletes', 'create') && (
+              <Button variant="outline" onClick={() => open('regFee', null)} className="border-yellow-400/40 text-yellow-400 hover:bg-yellow-400/10">
+                <BadgeDollarSign className="w-4 h-4 me-2" />{tr("Frais d'inscription", 'رسوم التسجيل')}
               </Button>
             )}
             {can('athletes', 'create') && (
@@ -536,6 +542,7 @@ export const Athletes: React.FC = () => {
       <PayDebtDialog isOpen={dialog === 'pay'} onClose={close} athlete={selected} onSaved={load} />
       <AttendanceDialog isOpen={dialog === 'presence' || dialog === 'absence'} onClose={close} athlete={selected}
                         initialStatus={dialog === 'absence' ? 'absent' : 'present'} onSaved={load} />
+      <RegistrationFeeDialog isOpen={dialog === 'regFee'} onClose={close} />
       <ExtraFeeDialog isOpen={dialog === 'fee'} onClose={close} athlete={selected} athletes={athletes} onSaved={load} />
 
       <AlertDialog open={toDelete !== null} onOpenChange={(o) => !o && setToDelete(null)}>

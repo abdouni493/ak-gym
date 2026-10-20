@@ -15,6 +15,7 @@ export interface StoreSettingsRow {
   rc: string | null;
   logo_url: string | null;
   currency: string | null;
+  registration_fee?: number | null;
 }
 
 export async function getStoreSettings(): Promise<StoreSettingsRow | null> {
@@ -25,6 +26,27 @@ export async function getStoreSettings(): Promise<StoreSettingsRow | null> {
 
 export async function saveStoreSettings(input: Partial<StoreSettingsRow>): Promise<void> {
   const { error } = await supabase.from('store_settings').upsert({ ...input, id: 'store' });
+  if (error) throw error;
+}
+
+// ---- Registration fee (frais d'inscription) --------------------------------
+
+// Local copy so the fee still works before the registration_fee column is migrated.
+const REG_FEE_KEY = 'gym.registrationFee';
+
+export async function getRegistrationFee(): Promise<number> {
+  try {
+    const { data, error } = await supabase.from('store_settings')
+      .select('registration_fee').eq('id', 'store').maybeSingle();
+    if (!error && data) return Number((data as { registration_fee: number | null }).registration_fee ?? 0);
+  } catch { /* fall back below */ }
+  try { return Number(localStorage.getItem(REG_FEE_KEY) ?? 0) || 0; } catch { return 0; }
+}
+
+export async function saveRegistrationFee(amount: number): Promise<void> {
+  const value = Math.max(0, amount || 0);
+  try { localStorage.setItem(REG_FEE_KEY, String(value)); } catch { /* ignore */ }
+  const { error } = await supabase.from('store_settings').upsert({ id: 'store', registration_fee: value });
   if (error) throw error;
 }
 
