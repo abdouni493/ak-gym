@@ -19,7 +19,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
-  Athlete, findAthleteByRfid, listAthleteSubscriptions, listSubscriptionTypes, recordSeance,
+  Athlete, findAthleteByRfid, getSessionInfo, recordSeance,
 } from '@/lib/api/athletes';
 import { useSerialPort } from '@/hooks/useSerialPort';
 import { useAuth } from '@/contexts/AuthContext';
@@ -154,7 +154,7 @@ export const GlobalRfidListener: React.FC = () => {
       const expiry = athlete.subscription_expiry;
       const today = new Date();
 
-      if (!expiry) {
+      if (!expiry && athlete.subscription_status !== 'active') {
         showResult({
           type: 'denied',
           athlete,
@@ -166,8 +166,11 @@ export const GlobalRfidListener: React.FC = () => {
         return;
       }
 
-      const expiryDate = new Date(expiry);
-      const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / 86400000);
+      const expiryDate = new Date(expiry ?? '9999-12-31');
+      // An open plan with no end date never expires; show no day count for it.
+      const daysLeft = expiry ? Math.ceil((expiryDate.getTime() - today.getTime()) / 86400000) : Infinity;
+      const daysProp = Number.isFinite(daysLeft) ? daysLeft : undefined;
+      const daysText = Number.isFinite(daysLeft) ? `${daysLeft} ${t('rfid.daysRemaining')}` : t('rfid.accessGranted');
 
       if (daysLeft < 0) {
         showResult({
@@ -185,29 +188,13 @@ export const GlobalRfidListener: React.FC = () => {
       // ── Check session-based subscription ──────────────────────────────
       let sessionsInfo: SessionsInfo | undefined;
 
-      const athleteSubs = await listAthleteSubscriptions(athlete.id);
-      const subTypes = await listSubscriptionTypes();
+      const info = await getSessionInfo(athlete.id);
+      const latestSubWithSessions = info?.subscription ?? null;
 
-      // Find latest subscription that has sessions (list is newest-first).
-      let latestSubWithSessions: { id: string; sessions: number; name: string } | null = null;
-      for (const sub of athleteSubs) {
-        const subType = subTypes.find((s) => s.id === sub.subscription_id);
-        if (subType && subType.sessions && subType.sessions > 0) {
-          latestSubWithSessions = { id: sub.id, sessions: subType.sessions, name: subType.name };
-          break;
-        }
-      }
-
-      if (latestSubWithSessions) {
+      if (info && latestSubWithSessions) {
         // This is a session-based subscription — check remaining sessions
-        const { data: historyData } = await supabase
-          .from('seances_history')
-          .select('seances_used, used_at')
-          .eq('athlete_subscription_id', latestSubWithSessions.id);
-        const history = (historyData ?? []) as { seances_used: number; used_at: string }[];
-
-        const totalUsed = history.reduce((sum, h) => sum + (h.seances_used || 0), 0);
-        const remaining = Math.max(0, (latestSubWithSessions.sessions || 0) - totalUsed);
+        const history = info.history;
+        const remaining = info.remaining;
 
         if (remaining <= 0) {
           // ── No sessions left → DENY ──────────────────────────────────
@@ -218,7 +205,7 @@ export const GlobalRfidListener: React.FC = () => {
             message: t('rfid.noSessions'),
             subMessage: `${athlete.full_name} ${t('rfid.noSessionsDesc')}`,
             sessionsInfo: { remaining: 0, total: latestSubWithSessions.sessions, justUsed: false },
-            daysLeft,
+            daysLeft: daysProp,
           });
           processingRef.current = false;
           return;
@@ -245,7 +232,7 @@ export const GlobalRfidListener: React.FC = () => {
             message: t('rfid.alreadyToday'),
             subMessage: t('rfid.alreadyTodayDesc'),
             sessionsInfo: { remaining, total: latestSubWithSessions.sessions, justUsed: false },
-            daysLeft,
+            daysLeft: daysProp,
             voice: 'enter', // courtesy entry — they are let in
           });
           
@@ -288,7 +275,7 @@ export const GlobalRfidListener: React.FC = () => {
             message: t('rfid.lastSession'),
             subMessage: t('rfid.lastSessionDesc'),
             sessionsInfo,
-            daysLeft,
+            daysLeft: daysProp,
           });
           processingRef.current = false;
           return;
@@ -305,7 +292,7 @@ export const GlobalRfidListener: React.FC = () => {
           message: t('rfid.accessGranted'),
           subMessage: `${newRemaining}/${latestSubWithSessions.sessions} ${t('rfid.sessionsRemaining')}`,
           sessionsInfo,
-          daysLeft,
+          daysLeft: daysProp,
         });
         processingRef.current = false;
         return;
@@ -322,7 +309,7 @@ export const GlobalRfidListener: React.FC = () => {
           uid,
           message: t('rfid.accessGranted'),
           subMessage: `${t('rfid.expiringSoon')} — ${daysLeft} ${t('rfid.dayLeft')}`,
-          daysLeft,
+          daysLeft: daysProp,
           sessionsInfo,
         });
       } else {
@@ -333,8 +320,8 @@ export const GlobalRfidListener: React.FC = () => {
           message: t('rfid.accessGranted'),
           subMessage: sessionsInfo
             ? `${sessionsInfo.remaining}/${sessionsInfo.total} ${t('rfid.sessionsRemaining')}`
-            : `${daysLeft} ${t('rfid.daysRemaining')}`,
-          daysLeft: sessionsInfo ? undefined : daysLeft,
+            : daysText,
+          daysLeft: daysProp,
           sessionsInfo,
         });
       }

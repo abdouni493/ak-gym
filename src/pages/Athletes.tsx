@@ -17,7 +17,7 @@ import {
 import {
   Search, Plus, User, Phone, Users, Zap, CalendarCheck, Wallet, Pencil, Trash2,
   MoreVertical, Dumbbell, UserCheck, AlertCircle, RefreshCw, Eye, HandCoins, UserX,
-  Receipt, X, AlertTriangle, CalendarClock, BadgeDollarSign,
+  Receipt, X, AlertTriangle, CalendarClock, BadgeDollarSign, Ticket,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { formatDZD, cn } from '@/lib/utils';
@@ -25,7 +25,7 @@ import { describeError } from '@/lib/supabase';
 import { usePermissions } from '@/contexts/AuthContext';
 import { useLang } from '@/hooks/useLang';
 import { ViewToggle, ViewMode } from '@/components/common/ViewToggle';
-import { Athlete, Sport, listAthletes, listSports, deleteAthlete } from '@/lib/api/athletes';
+import { Athlete, Sport, listAthletes, listSports, deleteAthlete, sessionsByAthlete } from '@/lib/api/athletes';
 import { debtByAthlete } from '@/lib/api/athleteExtras';
 import { AthleteFormDialog } from '@/components/athletes/AthleteFormDialog';
 import { SubscriptionDialog } from '@/components/athletes/SubscriptionDialog';
@@ -53,6 +53,7 @@ export const Athletes: React.FC = () => {
 
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [debts, setDebts] = useState<Record<string, number>>({});
+  const [sessions, setSessions] = useState<Record<string, { remaining: number; total: number }>>({});
   const [sports, setSports] = useState<Sport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,8 +73,11 @@ export const Athletes: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [a, s, d] = await Promise.all([listAthletes(), listSports(), debtByAthlete().catch(() => ({}))]);
+      const [a, s, d, se] = await Promise.all([
+        listAthletes(), listSports(), debtByAthlete().catch(() => ({})), sessionsByAthlete().catch(() => ({})),
+      ]);
       setAthletes(a);
+      setSessions(se);
       setSports(s);
       setDebts(d);
     } catch (e) {
@@ -197,7 +201,11 @@ export const Athletes: React.FC = () => {
   /** Remaining-days progress, assuming a 30-day plan for the bar scale. */
   const DaysBar: React.FC<{ a: Athlete }> = ({ a }) => {
     const d = daysLeft(a.subscription_expiry);
-    if (d === null) return <p className="text-xs text-gym-gold/40">{tr('Aucun abonnement', 'لا يوجد اشتراك')}</p>;
+    if (d === null) {
+      return a.subscription_status === 'active'
+        ? <p className="text-xs font-semibold text-green-400">{tr('Abonnement ouvert — sans date de fin', 'اشتراك مفتوح — بدون تاريخ انتهاء')}</p>
+        : <p className="text-xs text-gym-gold/40">{tr('Aucun abonnement', 'لا يوجد اشتراك')}</p>;
+    }
     const pct = d <= 0 ? 0 : Math.min(100, (d / 30) * 100);
     const tone = d < 0 ? 'bg-red-500' : d <= 7 ? 'bg-orange-400' : 'bg-green-500';
     return (
@@ -210,6 +218,27 @@ export const Athletes: React.FC = () => {
         </div>
         <div className="h-1.5 rounded-full bg-gym-black overflow-hidden">
           <div className={cn('h-full rounded-full transition-all', tone)} style={{ width: `${d < 0 ? 100 : Math.max(pct, 4)}%` }} />
+        </div>
+      </div>
+    );
+  };
+
+  const SessionsBar: React.FC<{ a: Athlete }> = ({ a }) => {
+    const se = sessions[a.id];
+    if (!se) return null;
+    const pct = (se.remaining / se.total) * 100;
+    const tone = se.remaining === 0 ? 'text-red-400' : se.remaining <= 2 ? 'text-orange-300' : 'text-yellow-400';
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-gym-gold/60 flex items-center gap-1"><Ticket className="w-3.5 h-3.5" />{tr('Séances', 'الحصص')}</span>
+          <span className={cn('font-bold', tone)}>
+            {se.remaining}/{se.total} {tr('restantes', 'متبقية')}
+          </span>
+        </div>
+        <div className="h-1.5 rounded-full bg-gym-black overflow-hidden">
+          <div className={cn('h-full rounded-full transition-all', se.remaining === 0 ? 'bg-red-500' : 'bg-yellow-400')}
+               style={{ width: `${Math.max(pct, se.remaining ? 4 : 100)}%` }} />
         </div>
       </div>
     );
@@ -434,7 +463,12 @@ export const Athletes: React.FC = () => {
                         <TableCell className="text-gym-gold/60 text-sm">{sportName(a) || '—'}</TableCell>
                         <TableCell>{stateBadge(athleteState(a), d)}</TableCell>
                         <TableCell className={cn('text-sm font-semibold', d === null ? 'text-gym-gold/40' : d < 0 ? 'text-red-400' : d <= 7 ? 'text-orange-300' : 'text-green-400')}>
-                          {d === null ? '—' : d < 0 ? tr('Expiré', 'منتهي') : d}
+                          {d === null ? (a.subscription_status === 'active' ? '∞' : '—') : d < 0 ? tr('Expiré', 'منتهي') : d}
+                          {sessions[a.id] && (
+                            <span className="block text-[11px] font-medium text-yellow-400">
+                              {sessions[a.id].remaining}/{sessions[a.id].total} {tr('séances', 'حصص')}
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell className="text-end text-sm">
                           {debt > 0 ? <span className="text-red-400 font-semibold">{formatDZD(debt)}</span> : <span className="text-gym-gold/30">—</span>}
@@ -493,6 +527,7 @@ export const Athletes: React.FC = () => {
                       </div>
 
                       <DaysBar a={a} />
+                      <SessionsBar a={a} />
 
                       {debt > 0 ? (
                         <div className="flex items-center justify-between rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2">

@@ -403,20 +403,44 @@ export interface SessionInfo {
  */
 export async function getSessionInfo(athleteId: string): Promise<SessionInfo | null> {
   const [subs, types] = await Promise.all([listAthleteSubscriptions(athleteId), listSubscriptionTypes()]);
-  let match: { id: string; sessions: number; name: string } | null = null;
-  for (const sub of subs) {                       // newest-first
-    const type = types.find((t) => t.id === sub.subscription_id);
-    if (type && type.sessions && type.sessions > 0) {
-      match = { id: sub.id, sessions: type.sessions, name: type.name };
-      break;
-    }
-  }
-  if (!match) return null;
+  // Only the current (newest) subscription counts: an older séance pack must not
+  // shadow a newer open/duration plan.
+  const current = subs[0];
+  const type = current && types.find((t) => t.id === current.subscription_id);
+  if (!current || !type || !type.sessions || type.sessions <= 0) return null;
+  const match = { id: current.id, sessions: type.sessions, name: type.name };
 
   const history = (await listSeanceHistory(athleteId))
-    .filter((h) => h.athlete_subscription_id === match!.id);
+    .filter((h) => h.athlete_subscription_id === match.id);
   const used = history.reduce((s, h) => s + (h.seances_used || 0), 0);
   return { subscription: match, remaining: Math.max(0, match.sessions - used), history };
+}
+
+/** Séances left on each athlete's current subscription, for session-based plans only. */
+export async function sessionsByAthlete(): Promise<Record<string, { remaining: number; total: number }>> {
+  const [subs, types, hist] = await Promise.all([
+    supabase.from('athlete_subscriptions').select('id, athlete_id, subscription_id, payment_date, created_at')
+      .order('payment_date', { ascending: false }).order('created_at', { ascending: false }),
+    supabase.from('subscriptions').select('id, sessions'),
+    supabase.from('seances_history').select('athlete_subscription_id, seances_used'),
+  ]);
+  if (subs.error) throw subs.error;
+  if (types.error) throw types.error;
+  const sessionsOf = new Map(((types.data ?? []) as { id: string; sessions: number | null }[])
+    .map((t) => [t.id, t.sessions ?? 0]));
+  const used: Record<string, number> = {};
+  for (const h of (hist.data ?? []) as { athlete_subscription_id: string | null; seances_used: number }[]) {
+    if (h.athlete_subscription_id) used[h.athlete_subscription_id] = (used[h.athlete_subscription_id] ?? 0) + (h.seances_used || 0);
+  }
+  const out: Record<string, { remaining: number; total: number }> = {};
+  const seen = new Set<string>();
+  for (const r of (subs.data ?? []) as { id: string; athlete_id: string; subscription_id: string | null }[]) {
+    if (seen.has(r.athlete_id)) continue;   // newest first: first row is the current one
+    seen.add(r.athlete_id);
+    const total = r.subscription_id ? sessionsOf.get(r.subscription_id) ?? 0 : 0;
+    if (total > 0) out[r.athlete_id] = { remaining: Math.max(0, total - (used[r.id] ?? 0)), total };
+  }
+  return out;
 }
 
 export async function recordSeance(input: {

@@ -81,7 +81,7 @@ export const Scanner: React.FC = () => {
     const expiry = found.subscription_expiry;
     const today = new Date();
 
-    if (!expiry) {
+    if (!expiry && found.subscription_status !== 'active') {
       // No subscription at all
       announceScan({ status: 'denied', voice: 'not_enter', athlete: found, title: t('rfid.noSubscription'),
         detail: `${found.full_name} ${t('rfid.noSubscriptionDesc')}` });
@@ -93,8 +93,11 @@ export const Scanner: React.FC = () => {
       return;
     }
 
-    const expiryDate = new Date(expiry);
-    const daysLeft = Math.ceil((expiryDate.getTime() - today.getTime()) / 86400000);
+    const expiryDate = new Date(expiry ?? '9999-12-31');
+    // An open plan with no end date never expires; show no day count for it.
+    const daysLeft = expiry ? Math.ceil((expiryDate.getTime() - today.getTime()) / 86400000) : Infinity;
+    const daysProp = Number.isFinite(daysLeft) ? daysLeft : undefined;
+    const daysText = Number.isFinite(daysLeft) ? `${daysLeft} ${t('rfid.daysRemaining')}` : t('rfid.accessGranted');
 
     if (daysLeft < 0) {
       // ── Expired ────────────────────────────────────────────────────────
@@ -192,17 +195,17 @@ export const Scanner: React.FC = () => {
     console.log('Access granted (door-opening disabled) for', found.first_name);
     if (daysLeft <= 7) {
       announceScan({ status: 'warning', voice: 'soon_expire', athlete: found, title: t('rfid.accessGranted'),
-        detail: `${t('rfid.expiringSoon')} — ${daysLeft} ${t('rfid.dayLeft')}`, daysLeft });
+        detail: `${t('rfid.expiringSoon')} — ${daysLeft} ${t('rfid.dayLeft')}`, daysLeft: daysProp });
       toast({
         title: '⚠️ ' + t('rfid.expiringSoon'),
-        description: `${found.full_name} — ${daysLeft} ${t('rfid.daysRemaining')}`,
+        description: `${found.full_name} — ${daysText}`,
       });
     } else {
       announceScan({ status: 'granted', voice: 'enter', athlete: found, title: t('rfid.accessGranted'),
-        detail: `${daysLeft} ${t('rfid.daysRemaining')}`, daysLeft });
+        detail: daysText, daysLeft: daysProp });
       toast({
         title: '✅ ' + t('rfid.accessGranted'),
-        description: `${found.full_name} — ${daysLeft} ${t('rfid.daysRemaining')}`,
+        description: `${found.full_name} — ${daysText}`,
       });
     }
   }, [toast, t]);
@@ -814,7 +817,9 @@ export const Scanner: React.FC = () => {
                         {(() => {
                           const exp = selectedAthlete.subscription_expiry;
                           const today = new Date();
-                          if (!exp) return <Badge className="bg-gray-500/20 text-gray-400 border-gray-500/30">{tr('Aucun abonnement', 'لا يوجد اشتراك')}</Badge>;
+                          if (!exp) return selectedAthlete.subscription_status === 'active'
+                            ? <Badge className="bg-green-500/20 text-green-400 border border-green-500/30">{tr('Actif — ouvert', 'نشط — مفتوح')}</Badge>
+                            : <Badge className="bg-gray-500/20 text-gray-400 border-gray-500/30">{tr('Aucun abonnement', 'لا يوجد اشتراك')}</Badge>;
                           const expDate = new Date(exp);
                           const daysLeft = Math.ceil((expDate.getTime() - today.getTime()) / 86400000);
                           if (daysLeft < 0) return <Badge className="bg-red-500/20 text-red-400 border border-red-500/30">{tr('Expiré', 'منتهي')} — {expDate.toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR')}</Badge>;
