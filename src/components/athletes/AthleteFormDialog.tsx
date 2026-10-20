@@ -289,11 +289,11 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
         <form onSubmit={submit} className="px-5 sm:px-6 py-5 space-y-4">
           {/* Identity */}
           <Section icon={<UserRound className="w-4 h-4" />} title={tr('Informations personnelles', 'المعلومات الشخصية')}>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="sm:w-44 shrink-0">
+            <div className="space-y-4">
+              <div className="rounded-xl border border-zinc-800 bg-black/40 p-3">
                 <PhotoPicker preview={preview} onChange={onPhotoChange} t={t} />
               </div>
-              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label className={LABEL}>{t('athX.firstName')} <span className="text-yellow-400">*</span></Label>
                   <Input value={form.first_name} onChange={(e) => set('first_name', e.target.value)} className={FIELD} />
