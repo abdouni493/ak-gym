@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Sidebar } from '@/components/Sidebar';
 import { Header } from '@/components/Header';
 import { GlobalRfidListener } from '@/components/GlobalRfidListener';
+import { CaisseGate, CaisseShortcut } from '@/components/caisse/CaisseGate';
 import { usePointerEventsGuard } from '@/hooks/usePointerEventsGuard';
 
 interface LayoutProps {
@@ -34,6 +35,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
       {/* Global RFID listener — captures card scans from any page */}
       <GlobalRfidListener />
+      <CaisseShortcut />
+      {/* Locks every interface until today's caisse is opened */}
+      <CaisseGate />
     </div>
   );
 };

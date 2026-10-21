@@ -12,8 +12,11 @@ import {
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Wallet, TrendingUp, TrendingDown, Plus, Trash2, ArrowDownCircle, ArrowUpCircle,
-  Users, AlertCircle,
+  Users, AlertCircle, LockOpen, Lock, History,
 } from 'lucide-react';
+import { useCaisseSession } from '@/contexts/CaisseSessionContext';
+import { GainsCard } from '@/components/caisse/GainsCard';
+import { CaisseHistoryDialog } from '@/components/caisse/CaisseHistoryDialog';
 import { toast } from '@/hooks/use-toast';
 import { formatDZD, cn } from '@/lib/utils';
 import { describeError } from '@/lib/supabase';
@@ -62,6 +65,8 @@ const StatCard: React.FC<{
 
 export const Caisse: React.FC = () => {
   const { can } = usePermissions();
+  const caisseSession = useCaisseSession();
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const [preset, setPreset] = useState<RangePreset>('today');
   const [custom, setCustom] = useState<DateRange>({ from: today(), to: today() });
@@ -179,12 +184,36 @@ export const Caisse: React.FC = () => {
             <h1 className="text-2xl md:text-3xl font-bold gradient-text">{tr('Caisse', 'الصندوق')}</h1>
             <p className="text-gym-gold/60 mt-1">{tr('Mouvements, solde et paiements en attente.', 'الحركات والرصيد والمدفوعات المعلقة.')}</p>
           </div>
+          <div className="flex flex-wrap gap-2">
+          {caisseSession.isOpen ? (
+            <Button onClick={caisseSession.requestClose} className="bg-red-600 hover:bg-red-700 text-white">
+              <Lock className="w-4 h-4 me-2" />{tr('Fermer la caisse', 'إغلاق الصندوق')}
+            </Button>
+          ) : (
+            <Button onClick={caisseSession.requestOpen} className="bg-green-600 hover:bg-green-700 text-white">
+              <LockOpen className="w-4 h-4 me-2" />{tr('Ouvrir la caisse', 'فتح الصندوق')}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => setHistoryOpen(true)}
+                  className="border-gym-gold/30 text-gym-gold hover:bg-gym-gold/10">
+            <History className="w-4 h-4 me-2" />{tr('Historique caisse', 'سجل الصندوق')}
+          </Button>
           {can('caisse', 'create') && (
             <Button onClick={() => setDialogOpen(true)} className="bg-gym-gold text-gym-black hover:bg-gym-gold/90">
               <Plus className="w-4 h-4 me-2" />{tr('Nouvelle opération', 'عملية جديدة')}
             </Button>
           )}
+          </div>
         </div>
+
+        {caisseSession.session && (
+          <p className="text-sm text-gym-gold/60">
+            {tr('Caisse ouverte avec', 'الصندوق فُتح بمبلغ')} <b className="text-gym-gold">{formatDZD(caisseSession.session.opening_amount)}</b>
+            {caisseSession.session.closed_at && <> · {tr('fermée avec', 'أُغلق بمبلغ')} <b className="text-gym-gold">{formatDZD(caisseSession.session.closing_amount ?? 0)}</b></>}
+          </p>
+        )}
+
+        <GainsCard />
 
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -365,6 +394,8 @@ export const Caisse: React.FC = () => {
           </Tabs>
         )}
       </div>
+
+      <CaisseHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} />
 
       {/* New transaction */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

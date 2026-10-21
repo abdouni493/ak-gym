@@ -19,6 +19,7 @@ import { productStatus } from '@/lib/api/products';
 import { debtByAthlete } from '@/lib/api/athleteExtras';
 import { formatDZD, cn } from '@/lib/utils';
 import { daysLeft } from '@/components/athletes/athleteStatus';
+import { GainsCard } from '@/components/caisse/GainsCard';
 
 interface AthleteLite { id: string; full_name: string; photo_url: string | null; subscription_expiry: string | null; phone: string | null }
 interface StockAlert { id: string; name: string; stock: number; status: string }
@@ -221,6 +222,7 @@ export const Dashboard: React.FC = () => {
         ) : (
           <>
             {/* Money */}
+            {showMoney && (canView('caisse') || canView('reports')) && <GainsCard />}
             {showMoney && (canView('caisse') || canView('reports')) && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <Stat icon={<TrendingUp className="w-5 h-5 text-green-400" />} label={tr('Recettes aujourd’hui', 'إيرادات اليوم')} value={formatDZD(d.inToday)}
