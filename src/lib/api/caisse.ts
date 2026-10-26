@@ -40,7 +40,7 @@ export interface OutstandingRow {
 // Date range presets
 // ---------------------------------------------------------------------------
 
-export type RangePreset = 'today' | 'week' | 'month' | 'custom' | 'all';
+export type RangePreset = 'today' | 'yesterday' | 'week' | 'month' | 'thisMonth' | 'custom' | 'all';
 
 const iso = (d: Date): string => {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -61,6 +61,13 @@ export function resolveRange(preset: RangePreset, custom?: Partial<DateRange>): 
   switch (preset) {
     case 'today':
       return { from: today, to: today };
+    case 'yesterday': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 1);
+      return { from: iso(d), to: iso(d) };
+    }
+    case 'thisMonth':
+      return { from: iso(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
     case 'week': {
       const d = new Date(now);
       d.setDate(d.getDate() - 6); // inclusive of today = 7 days
