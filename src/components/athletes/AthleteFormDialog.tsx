@@ -137,9 +137,24 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
   }, [isOpen, athlete, canSubscribe]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Default the amount to the full price when a subscription type is chosen.
+  // The amount paid covers the subscription AND the registration fee (when included).
   useEffect(() => {
-    if (selectedSub) setSubAmountPaid(String(selectedSub.price));
-  }, [selectedSub]);
+    const fee = !isEdit && regFee > 0 && regFeePaid ? regFee : 0;
+    const price = selectedSub ? Number(selectedSub.price) || 0 : 0;
+    setSubAmountPaid(price + fee > 0 ? String(price + fee) : '');
+  }, [selectedSub, regFee, regFeePaid, isEdit]);
+
+  // Payment breakdown. `regFeePaid` now means "registration fee included" (charged once,
+  // only when the athlete is created — never on renewals). The single amount-paid field
+  // covers subscription + fee: it settles the fee first, the rest goes to the subscription.
+  const subPrice = selectedSub ? Number(selectedSub.price) || 0 : 0;
+  const showFee = !isEdit && regFee > 0;
+  const feeDue = showFee && regFeePaid ? regFee : 0;
+  const grandTotal = subPrice + feeDue;
+  const collectedNow = Math.max(0, Number(subAmountPaid) || 0);
+  const feeCollected = Math.min(feeDue, collectedNow);
+  const subPaid = selectedSub ? collectedNow - feeCollected : 0;
+  const totalRemaining = Math.max(0, grandTotal - collectedNow);
 
   // PhotoPicker hands over an already-optimised file (or null = remove photo).
   const onPhotoChange = (file: File | null, url: string | null) => {
@@ -207,14 +222,14 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
         toast({ title: t('athX.updated'), description: `${form.first_name} ${form.last_name}` });
       } else {
         const created = await createAthlete(payload);
-        if (regFee > 0) {
+        if (feeDue > 0) {
           try {
             await createExtraFee({
               athlete_id: created.id,
               name: tr("Frais d'inscription", 'رسوم التسجيل'),
               quantity: 1,
               unit_price: regFee,
-              amount_paid: regFeePaid ? regFee : 0,
+              amount_paid: feeCollected,
               fee_date: subPaymentDate || today(),
             });
           } catch (feeErr) {
@@ -229,7 +244,7 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
               athleteId: created.id,
               subscription: selectedSub,
               paymentDate: subPaymentDate,
-              amountPaid: Number(subAmountPaid) || 0,
+              amountPaid: subPaid,
               creditUsed: 0,
               currentBalance: 0,
               currentTotalPaid: 0,
@@ -257,15 +272,6 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
   };
 
 
-  const subPrice = selectedSub ? Number(selectedSub.price) : 0;
-  const subPaid = selectedSub ? Number(subAmountPaid) || 0 : 0;
-  const remaining = selectedSub ? Math.max(0, subPrice - subPaid) : 0;
-  const showFee = !isEdit && regFee > 0;
-  const feeDue = showFee ? regFee : 0;
-  const feeCollected = showFee && regFeePaid ? regFee : 0;
-  const grandTotal = subPrice + feeDue;
-  const collectedNow = subPaid + feeCollected;
-  const totalRemaining = remaining + (feeDue - feeCollected);
 
   return (
     <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
@@ -408,11 +414,6 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
                     <Label className={LABEL}>{t('athX.paymentDate')}</Label>
                     <Input type="date" value={subPaymentDate} onChange={(e) => setSubPaymentDate(e.target.value)} className={FIELD} />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label className={LABEL}>{t('athX.amountPaid')}</Label>
-                    <Input type="number" min="0" step="0.01" value={subAmountPaid}
-                           onChange={(e) => setSubAmountPaid(e.target.value)} className={cn(FIELD, 'text-yellow-300 font-semibold')} />
-                  </div>
                 </div>
               )}
             </Section>
@@ -425,12 +426,12 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
               <div className="flex items-center justify-between gap-3 rounded-xl bg-black/60 border border-zinc-800 px-4 py-3">
                 <div>
                   <p className="text-lg font-extrabold text-yellow-400">{formatDZD(regFee)}</p>
-                  <p className={cn('text-[11px]', regFeePaid ? 'text-emerald-400' : 'text-red-400')}>
-                    {regFeePaid ? tr('Payés', 'مدفوعة') : tr('Non payés — ajoutés à la dette', 'غير مدفوعة — تضاف إلى الدين')}
+                  <p className={cn('text-[11px]', regFeePaid ? 'text-emerald-400' : 'text-zinc-500')}>
+                    {regFeePaid ? tr('Inclus dans le total à payer', 'مضمنة في المجموع') : tr('Non appliqués', 'غير مطبقة')}
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
-                  {tr('Payés', 'مدفوعة')}
+                  {tr('Inclure', 'تضمين')}
                   <Switch checked={regFeePaid} onCheckedChange={setRegFeePaid}
                           className="data-[state=checked]:bg-yellow-400 data-[state=unchecked]:bg-zinc-700" />
                 </label>
@@ -439,7 +440,7 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
           )}
 
           {/* Payment summary: subscription + registration fee */}
-          {!isEdit && (selectedSub || showFee) && (
+          {!isEdit && (selectedSub || feeDue > 0) && (
             <div className="rounded-2xl border border-yellow-400/40 bg-gradient-to-br from-yellow-400/15 via-yellow-400/5 to-transparent p-4 space-y-2 animate-fade-in">
               <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-yellow-400">
                 <Receipt className="w-4 h-4" />{tr('Récapitulatif', 'الملخص')}
@@ -449,7 +450,7 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
                   <span>{selectedSub.name}</span><span>{formatDZD(subPrice)}</span>
                 </div>
               )}
-              {showFee && (
+              {feeDue > 0 && (
                 <div className="flex justify-between text-sm text-zinc-300">
                   <span>{tr("Frais d'inscription", 'رسوم التسجيل')}</span><span>{formatDZD(regFee)}</span>
                 </div>
@@ -457,9 +458,11 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
               <div className="flex justify-between border-t border-yellow-400/20 pt-2 text-base font-extrabold text-zinc-100">
                 <span>{tr('Total', 'المجموع')}</span><span className="text-yellow-400">{formatDZD(grandTotal)}</span>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-zinc-400">{tr('Encaissé maintenant', 'المحصّل الآن')}</span>
-                <span className="font-semibold text-emerald-400">{formatDZD(collectedNow)}</span>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <Label className="text-zinc-400">{t('athX.amountPaid')}</Label>
+                <Input type="number" min="0" step="0.01" value={subAmountPaid}
+                       onChange={(e) => setSubAmountPaid(e.target.value)}
+                       className={cn(FIELD, 'max-w-[180px] text-end text-yellow-300 font-semibold')} />
               </div>
               <div className="flex justify-between text-sm">
                 <span className="flex items-center gap-1.5 text-zinc-400"><CreditCard className="w-4 h-4" />{t('athX.remainingAfter')}</span>
