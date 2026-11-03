@@ -410,19 +410,26 @@ export async function getSessionInfo(athleteId: string): Promise<SessionInfo | n
   if (!current || !type || !type.sessions || type.sessions <= 0) return null;
   const match = { id: current.id, sessions: type.sessions, name: type.name };
 
-  const history = (await listSeanceHistory(athleteId))
-    .filter((h) => h.athlete_subscription_id === match.id);
-  const used = history.reduce((s, h) => s + (h.seances_used || 0), 0);
+  const [allHistory, att] = await Promise.all([
+    listSeanceHistory(athleteId),
+    supabase.from('athlete_attendance').select('id', { count: 'exact', head: true })
+      .eq('athlete_id', athleteId).eq('status', 'present').gte('att_date', current.payment_date),
+  ]);
+  const history = allHistory.filter((h) => h.athlete_subscription_id === match.id);
+  // Manual presences don't write séance history, so count present attendance since the
+  // subscription started too; scans write both, hence the max (no double count).
+  const used = Math.max(history.reduce((s, h) => s + (h.seances_used || 0), 0), att.count ?? 0);
   return { subscription: match, remaining: Math.max(0, match.sessions - used), history };
 }
 
 /** Séances left on each athlete's current subscription, for session-based plans only. */
 export async function sessionsByAthlete(): Promise<Record<string, { remaining: number; total: number }>> {
-  const [subs, types, hist] = await Promise.all([
+  const [subs, types, hist, att] = await Promise.all([
     supabase.from('athlete_subscriptions').select('id, athlete_id, subscription_id, payment_date, created_at')
       .order('payment_date', { ascending: false }).order('created_at', { ascending: false }),
     supabase.from('subscriptions').select('id, sessions'),
     supabase.from('seances_history').select('athlete_subscription_id, seances_used'),
+    supabase.from('athlete_attendance').select('athlete_id, att_date').eq('status', 'present'),
   ]);
   if (subs.error) throw subs.error;
   if (types.error) throw types.error;
@@ -434,11 +441,20 @@ export async function sessionsByAthlete(): Promise<Record<string, { remaining: n
   }
   const out: Record<string, { remaining: number; total: number }> = {};
   const seen = new Set<string>();
-  for (const r of (subs.data ?? []) as { id: string; athlete_id: string; subscription_id: string | null }[]) {
+  const presences = new Map<string, string[]>();
+  for (const a of (att.data ?? []) as { athlete_id: string; att_date: string }[]) {
+    const list = presences.get(a.athlete_id) ?? [];
+    list.push(a.att_date);
+    presences.set(a.athlete_id, list);
+  }
+  for (const r of (subs.data ?? []) as { id: string; athlete_id: string; subscription_id: string | null; payment_date: string }[]) {
     if (seen.has(r.athlete_id)) continue;   // newest first: first row is the current one
     seen.add(r.athlete_id);
     const total = r.subscription_id ? sessionsOf.get(r.subscription_id) ?? 0 : 0;
-    if (total > 0) out[r.athlete_id] = { remaining: Math.max(0, total - (used[r.id] ?? 0)), total };
+    if (total <= 0) continue;
+    // Manual presences only exist in attendance; scans write both tables — take the max.
+    const attended = (presences.get(r.athlete_id) ?? []).filter((d) => d >= r.payment_date).length;
+    out[r.athlete_id] = { remaining: Math.max(0, total - Math.max(used[r.id] ?? 0, attended)), total };
   }
   return out;
 }
