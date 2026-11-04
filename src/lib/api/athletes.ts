@@ -231,6 +231,10 @@ export interface AssignSubscriptionInput {
   creditUsed?: number;
   currentBalance: number;
   currentTotalPaid: number;
+  /** Price after discount (defaults to the plan price). */
+  finalPrice?: number;
+  /** Name saved on the athlete subscription (e.g. with the discount details). */
+  displayName?: string;
 }
 
 /**
@@ -252,8 +256,8 @@ export async function assignSubscription(input: AssignSubscriptionInput): Promis
     .insert({
       athlete_id: input.athleteId,
       subscription_id: sub.id,
-      name: sub.name,
-      price: sub.price,
+      name: input.displayName ?? sub.name,
+      price: input.finalPrice ?? sub.price,
       payment_date: paymentDate,
       expiry_date: expiry,
       amount_paid: amountPaid,

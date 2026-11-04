@@ -22,6 +22,7 @@ import type { AthleteSubscription } from '@/lib/api/athletes';
 import { getLatestSubscription, updateAthleteSubscription, createExtraFee } from '@/lib/api/athleteExtras';
 import { getRegistrationFee } from '@/lib/api/misc';
 import { cn } from '@/lib/utils';
+import { DiscountControl, DiscountState, NO_DISCOUNT, applyDiscount, nameWithDiscount } from './DiscountControl';
 import { SubscriptionFields, SubFields, subFieldsFrom } from './EditSubscriptionDialog';
 import {
   Athlete, AthleteInput, Sport, Subscription,
@@ -67,6 +68,7 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
   const [subTypeId, setSubTypeId] = useState(NONE);
   const [subPaymentDate, setSubPaymentDate] = useState(today());
   const [subAmountPaid, setSubAmountPaid] = useState('');
+  const [discount, setDiscount] = useState<DiscountState>(NO_DISCOUNT);
 
   // Registration fee (create mode only), charged once on creation
   const [regFee, setRegFee] = useState(0);
@@ -131,6 +133,7 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
     setSubTypeId(NONE);
     setSubPaymentDate(today());
     setSubAmountPaid('');
+    setDiscount(NO_DISCOUNT);
     setRegFee(0);
     setRegFeePaid(true);
     return () => { active = false; };
@@ -140,14 +143,16 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
   // The amount paid covers the subscription AND the registration fee (when included).
   useEffect(() => {
     const fee = !isEdit && regFee > 0 && regFeePaid ? regFee : 0;
-    const price = selectedSub ? Number(selectedSub.price) || 0 : 0;
+    const price = selectedSub ? applyDiscount(Number(selectedSub.price) || 0, discount).final : 0;
     setSubAmountPaid(price + fee > 0 ? String(price + fee) : '');
-  }, [selectedSub, regFee, regFeePaid, isEdit]);
+  }, [selectedSub, regFee, regFeePaid, isEdit, discount]);
 
   // Payment breakdown. `regFeePaid` now means "registration fee included" (charged once,
   // only when the athlete is created — never on renewals). The single amount-paid field
   // covers subscription + fee: it settles the fee first, the rest goes to the subscription.
-  const subPrice = selectedSub ? Number(selectedSub.price) || 0 : 0;
+  const basePrice = selectedSub ? Number(selectedSub.price) || 0 : 0;
+  const disc = applyDiscount(basePrice, discount);
+  const subPrice = disc.final;
   const showFee = !isEdit && regFee > 0;
   const feeDue = showFee && regFeePaid ? regFee : 0;
   const grandTotal = subPrice + feeDue;
@@ -245,6 +250,8 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
               subscription: selectedSub,
               paymentDate: subPaymentDate,
               amountPaid: subPaid,
+              finalPrice: subPrice,
+              displayName: nameWithDiscount(selectedSub.name, disc.label),
               creditUsed: 0,
               currentBalance: 0,
               currentTotalPaid: 0,
@@ -416,6 +423,7 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
                   </div>
                 </div>
               )}
+              {selectedSub && <DiscountControl price={basePrice} value={discount} onChange={setDiscount} />}
             </Section>
           )}
 
@@ -447,7 +455,12 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
               </p>
               {selectedSub && (
                 <div className="flex justify-between text-sm text-zinc-300">
-                  <span>{selectedSub.name}</span><span>{formatDZD(subPrice)}</span>
+                  <span>{selectedSub.name}</span><span>{formatDZD(basePrice)}</span>
+                </div>
+              )}
+              {selectedSub && disc.discount > 0 && (
+                <div className="flex justify-between text-sm text-emerald-400">
+                  <span>{tr('Remise', 'تخفيض')}</span><span>-{formatDZD(disc.discount)}</span>
                 </div>
               )}
               {feeDue > 0 && (

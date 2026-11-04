@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DiscountControl, DiscountState, NO_DISCOUNT, applyDiscount, nameWithDiscount } from './DiscountControl';
 import { CalendarCheck, RefreshCw } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { formatDZD } from '@/lib/utils';
@@ -41,6 +42,7 @@ export const SubscriptionDialog: React.FC<Props> = ({ isOpen, onClose, athlete, 
   const [typeId, setTypeId] = useState('');
   const [paymentDate, setPaymentDate] = useState(today());
   const [amountPaid, setAmountPaid] = useState('');
+  const [discount, setDiscount] = useState<DiscountState>(NO_DISCOUNT);
   const [useCredit, setUseCredit] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -51,7 +53,7 @@ export const SubscriptionDialog: React.FC<Props> = ({ isOpen, onClose, athlete, 
   useEffect(() => {
     if (!isOpen || !athlete) return;
     let active = true;
-    setTypeId(''); setPaymentDate(today()); setAmountPaid(''); setUseCredit(false);
+    setTypeId(''); setPaymentDate(today()); setAmountPaid(''); setUseCredit(false); setDiscount(NO_DISCOUNT);
     (async () => {
       try {
         const [ty, hi] = await Promise.all([
@@ -74,10 +76,12 @@ export const SubscriptionDialog: React.FC<Props> = ({ isOpen, onClose, athlete, 
 
   // Default the amount to the full price when a type is chosen.
   useEffect(() => {
-    if (selected) setAmountPaid(String(selected.price));
-  }, [selected]);
+    if (selected) setAmountPaid(String(applyDiscount(Number(selected.price) || 0, discount).final));
+  }, [selected, discount]);
 
-  const creditUsed = useCredit && selected ? Math.min(balance, selected.price) : 0;
+  const disc = applyDiscount(selected ? Number(selected.price) || 0 : 0, discount);
+  const finalPrice = disc.final;
+  const creditUsed = useCredit && selected ? Math.min(balance, finalPrice) : 0;
   const effectivePaid = useCredit ? creditUsed : Number(amountPaid) || 0;
 
   const submit = async () => {
@@ -92,6 +96,8 @@ export const SubscriptionDialog: React.FC<Props> = ({ isOpen, onClose, athlete, 
         subscription: selected,
         paymentDate,
         amountPaid: effectivePaid,
+        finalPrice,
+        displayName: nameWithDiscount(selected.name, disc.label),
         creditUsed,
         currentBalance: balance,
         currentTotalPaid: athlete.total_paid,
@@ -144,6 +150,8 @@ export const SubscriptionDialog: React.FC<Props> = ({ isOpen, onClose, athlete, 
             </div>
           )}
 
+          {selected && <DiscountControl price={Number(selected.price) || 0} value={discount} onChange={setDiscount} />}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>{t('athX.paymentDate')}</Label>
@@ -161,7 +169,7 @@ export const SubscriptionDialog: React.FC<Props> = ({ isOpen, onClose, athlete, 
             <div className="flex items-center justify-between rounded-lg border border-gym-gold/20 p-3">
               <div>
                 <Label className="cursor-pointer">{t('athX.payWithCredit')}</Label>
-                <p className="text-[11px] text-gym-gold/40">{formatDZD(Math.min(balance, selected?.price ?? 0))}</p>
+                <p className="text-[11px] text-gym-gold/40">{formatDZD(Math.min(balance, finalPrice))}</p>
               </div>
               <Switch checked={useCredit} onCheckedChange={setUseCredit} disabled={!selected} />
             </div>
@@ -170,7 +178,7 @@ export const SubscriptionDialog: React.FC<Props> = ({ isOpen, onClose, athlete, 
           {selected && (
             <div className="flex items-center justify-between rounded-lg bg-gym-gold/10 p-3">
               <span className="text-sm">{t('athX.remainingAfter')}</span>
-              <span className="font-bold">{formatDZD(Math.max(0, selected.price - effectivePaid))}</span>
+              <span className="font-bold">{formatDZD(Math.max(0, finalPrice - effectivePaid))}</span>
             </div>
           )}
 
