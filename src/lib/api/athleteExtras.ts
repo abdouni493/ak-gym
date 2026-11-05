@@ -332,6 +332,8 @@ export interface AthleteSubscriptionPatch {
   payment_date: string;
   expiry_date: string | null;
   amount_paid: number;
+  /** Catalog plan the subscription refers to (left untouched when omitted). */
+  subscription_id?: string | null;
 }
 
 /**
@@ -378,6 +380,7 @@ export async function updateAthleteSubscription(
     payment_date: patch.payment_date,
     expiry_date: patch.expiry_date || null,
     amount_paid: Math.max(0, patch.amount_paid),
+    ...(patch.subscription_id !== undefined ? { subscription_id: patch.subscription_id } : {}),
   }).eq('id', prev.id);
   if (error) throw error;
   await bumpTotalPaid(prev.athlete_id, patch.amount_paid - Number(prev.amount_paid));

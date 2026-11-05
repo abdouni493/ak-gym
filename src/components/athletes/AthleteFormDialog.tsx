@@ -23,7 +23,6 @@ import { getLatestSubscription, updateAthleteSubscription, createExtraFee } from
 import { getRegistrationFee } from '@/lib/api/misc';
 import { cn } from '@/lib/utils';
 import { DiscountControl, DiscountState, NO_DISCOUNT, applyDiscount, nameWithDiscount } from './DiscountControl';
-import { SubscriptionFields, SubFields, subFieldsFrom } from './EditSubscriptionDialog';
 import {
   Athlete, AthleteInput, Sport, Subscription,
   createAthlete, updateAthlete, listSports, createSport, deleteSport,
@@ -47,6 +46,18 @@ const blank = (): AthleteInput => ({
 
 const today = () => new Date().toISOString().split('T')[0];
 const NONE = '__none__';
+/** Edit mode: the last subscription's plan no longer exists in the catalog. */
+const CUSTOM = '__custom__';
+
+const addDays = (iso: string, days: number): string => {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+/** Saved names carry the discount details (" · Remise …"): keep only the plan name. */
+const stripDiscount = (name: string) => name.split(' · Remise')[0].trim();
 
 export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, onSaved, canSubscribe }) => {
   const { language } = useAuth();
@@ -74,9 +85,12 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
   const [regFee, setRegFee] = useState(0);
   const [regFeePaid, setRegFeePaid] = useState(true);
 
-  // Edit mode: latest subscription
+  // Edit mode: latest subscription, edited with the same options as on creation
   const [lastSub, setLastSub] = useState<AthleteSubscription | null>(null);
-  const [lastFields, setLastFields] = useState<SubFields | null>(null);
+  const [subLoaded, setSubLoaded] = useState(false);
+  const [subExpiry, setSubExpiry] = useState('');
+  const [customName, setCustomName] = useState('');
+  const [customPrice, setCustomPrice] = useState(0);
 
   const selectedSub = useMemo(
     () => (subTypeId === NONE ? null : subTypes.find((s) => s.id === subTypeId) ?? null),
@@ -92,7 +106,7 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
       try {
         const [s, types] = await Promise.all([
           listSports(),
-          !athlete && canSubscribe ? listSubscriptionTypes() : Promise.resolve([]),
+          canSubscribe ? listSubscriptionTypes() : Promise.resolve([] as Subscription[]),
         ]);
         if (!active) return;
         setSports(s);
@@ -105,8 +119,21 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
           const last = await getLatestSubscription(athlete.id).catch(() => null);
           if (!active) return;
           setLastSub(last);
-          setLastFields(last ? subFieldsFrom(last) : null);
+          if (last) {
+            const type = last.subscription_id ? types.find((x) => x.id === last.subscription_id) : undefined;
+            const base = type ? Number(type.price) || 0 : Number(last.price) || 0;
+            setCustomName(stripDiscount(last.name));
+            setCustomPrice(base);
+            setSubTypeId(type ? type.id : CUSTOM);
+            setSubPaymentDate(last.payment_date);
+            setSubExpiry(last.expiry_date ?? '');
+            // A price below the plan price means a discount was applied: show it as a manual total.
+            const saved = Number(last.price) || 0;
+            setDiscount(saved !== base ? { enabled: true, mode: 'manual', value: String(saved) } : NO_DISCOUNT);
+            setSubAmountPaid(String(Number(last.amount_paid) || 0));
+          }
         }
+        if (active) setSubLoaded(true);
       } catch (e) {
         toast({ title: t('athX.couldNotLoad'), description: describeError(e), variant: 'destructive' });
       }
@@ -126,7 +153,10 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
     }
     setPhotoFile(null);
     setLastSub(null);
-    setLastFields(null);
+    setSubLoaded(false);
+    setSubExpiry('');
+    setCustomName('');
+    setCustomPrice(0);
     setNewSport('');
     setManageSports(false);
     setSportPendingDelete(null);
@@ -141,16 +171,21 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
 
   // Default the amount to the full price when a subscription type is chosen.
   // The amount paid covers the subscription AND the registration fee (when included).
+  // When editing an existing subscription, the amount already paid is kept as is.
   useEffect(() => {
+    if (isEdit && lastSub) return;
     const fee = !isEdit && regFee > 0 && regFeePaid ? regFee : 0;
     const price = selectedSub ? applyDiscount(Number(selectedSub.price) || 0, discount).final : 0;
     setSubAmountPaid(price + fee > 0 ? String(price + fee) : '');
-  }, [selectedSub, regFee, regFeePaid, isEdit, discount]);
+  }, [selectedSub, regFee, regFeePaid, isEdit, discount, lastSub]);
 
   // Payment breakdown. `regFeePaid` now means "registration fee included" (charged once,
   // only when the athlete is created — never on renewals). The single amount-paid field
   // covers subscription + fee: it settles the fee first, the rest goes to the subscription.
-  const basePrice = selectedSub ? Number(selectedSub.price) || 0 : 0;
+  const isCustom = isEdit && !!lastSub && subTypeId === CUSTOM;
+  const planName = selectedSub ? selectedSub.name : isCustom ? (customName.trim() || stripDiscount(lastSub!.name)) : null;
+  const hasPlan = planName !== null;
+  const basePrice = selectedSub ? Number(selectedSub.price) || 0 : isCustom ? customPrice : 0;
   const disc = applyDiscount(basePrice, discount);
   const subPrice = disc.final;
   const showFee = !isEdit && regFee > 0;
@@ -158,7 +193,20 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
   const grandTotal = subPrice + feeDue;
   const collectedNow = Math.max(0, Number(subAmountPaid) || 0);
   const feeCollected = Math.min(feeDue, collectedNow);
-  const subPaid = selectedSub ? collectedNow - feeCollected : 0;
+  const subPaid = hasPlan ? collectedNow - feeCollected : 0;
+  const editingLast = isEdit && !!lastSub;
+
+  // Changing the plan or the payment date recomputes the expiry (still editable by hand).
+  const onTypeChange = (id: string) => {
+    setSubTypeId(id);
+    const type = subTypes.find((x) => x.id === id);
+    if (type) setSubExpiry(type.duration > 0 ? addDays(subPaymentDate || today(), type.duration) : '');
+    if (editingLast) setDiscount(NO_DISCOUNT);
+  };
+  const onPaymentDateChange = (date: string) => {
+    setSubPaymentDate(date);
+    if (selectedSub && date) setSubExpiry(selectedSub.duration > 0 ? addDays(date, selectedSub.duration) : '');
+  };
   const totalRemaining = Math.max(0, grandTotal - collectedNow);
 
   // PhotoPicker hands over an already-optimised file (or null = remove photo).
@@ -210,14 +258,34 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
 
       if (isEdit && athlete) {
         await updateAthlete(athlete.id, payload);
-        if (lastSub && lastFields
-            && JSON.stringify(lastFields) !== JSON.stringify(subFieldsFrom(lastSub))) {
-          await updateAthleteSubscription(lastSub, {
-            name: lastFields.name || lastSub.name,
-            price: Number(lastFields.price) || 0,
-            payment_date: lastFields.payment_date || lastSub.payment_date,
-            expiry_date: lastFields.expiry_date || null,
-            amount_paid: Number(lastFields.amount_paid) || 0,
+        if (canSubscribe && lastSub && hasPlan) {
+          const patch = {
+            name: nameWithDiscount(planName!, disc.label),
+            price: subPrice,
+            payment_date: subPaymentDate || lastSub.payment_date,
+            expiry_date: subExpiry || null,
+            amount_paid: collectedNow,
+            subscription_id: selectedSub ? selectedSub.id : lastSub.subscription_id,
+          };
+          const changed = patch.name !== lastSub.name
+            || patch.price !== Number(lastSub.price)
+            || patch.payment_date !== lastSub.payment_date
+            || patch.expiry_date !== (lastSub.expiry_date ?? null)
+            || patch.amount_paid !== Number(lastSub.amount_paid)
+            || patch.subscription_id !== lastSub.subscription_id;
+          if (changed) await updateAthleteSubscription(lastSub, patch);
+        } else if (canSubscribe && !lastSub && selectedSub) {
+          // No subscription yet: assign one like on creation.
+          await assignSubscription({
+            athleteId: athlete.id,
+            subscription: selectedSub,
+            paymentDate: subPaymentDate,
+            amountPaid: subPaid,
+            finalPrice: subPrice,
+            displayName: nameWithDiscount(selectedSub.name, disc.label),
+            creditUsed: 0,
+            currentBalance: athlete.account_balance ?? 0,
+            currentTotalPaid: athlete.total_paid ?? 0,
           });
         }
         // Free the storage used by a replaced or removed photo.
@@ -400,13 +468,21 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
             )}
           </Section>
 
-          {/* Inline subscription assignment (create mode only) */}
-          {!isEdit && canSubscribe && (
-            <Section icon={<CalendarCheck className="w-4 h-4" />} title={t('athX.subSection')} hint={t('athX.subSectionDesc')}>
-              <Select value={subTypeId} onValueChange={setSubTypeId}>
+          {/* Subscription: assigned on creation, the latest one is edited with the same options */}
+          {canSubscribe && (!isEdit || subLoaded) && (
+            <Section icon={<CalendarCheck className="w-4 h-4" />}
+                     title={editingLast ? tr('Dernier abonnement', 'آخر اشتراك') : t('athX.subSection')}
+                     hint={editingLast
+                       ? tr('Modifiez le type, la date, le prix, la remise et le montant payé du dernier abonnement.',
+                         'عدّل النوع والتاريخ والسعر والتخفيض والمبلغ المدفوع لآخر اشتراك.')
+                       : t('athX.subSectionDesc')}>
+              <Select value={subTypeId} onValueChange={onTypeChange}>
                 <SelectTrigger className={FIELD}><SelectValue placeholder={t('athX.selectSubscription')} /></SelectTrigger>
                 <SelectContent className={MENU}>
-                  <SelectItem value={NONE}>{t('athX.noSubscription')}</SelectItem>
+                  {!editingLast && <SelectItem value={NONE}>{t('athX.noSubscription')}</SelectItem>}
+                  {editingLast && !subTypes.some((x) => x.id === lastSub!.subscription_id) && (
+                    <SelectItem value={CUSTOM}>{stripDiscount(lastSub!.name)} — {tr('actuel', 'الحالي')}</SelectItem>
+                  )}
                   {subTypes.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.name} — {formatDZD(s.price)}{s.duration > 0 ? ` · ${s.duration}${t('athX.days').charAt(0)}` : ` · ${t('athX.open')}`}
@@ -415,15 +491,35 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
                 </SelectContent>
               </Select>
 
-              {selectedSub && (
+              {isCustom && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fade-in">
                   <div className="space-y-1.5">
-                    <Label className={LABEL}>{t('athX.paymentDate')}</Label>
-                    <Input type="date" value={subPaymentDate} onChange={(e) => setSubPaymentDate(e.target.value)} className={FIELD} />
+                    <Label className={LABEL}>{tr('Nom de l’abonnement', 'اسم الاشتراك')}</Label>
+                    <Input value={customName} onChange={(e) => setCustomName(e.target.value)} className={FIELD} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className={LABEL}>{tr('Prix', 'السعر')}</Label>
+                    <Input type="number" min="0" step="0.01" value={customPrice}
+                           onChange={(e) => setCustomPrice(Math.max(0, Number(e.target.value) || 0))} className={FIELD} />
                   </div>
                 </div>
               )}
-              {selectedSub && <DiscountControl price={basePrice} value={discount} onChange={setDiscount} />}
+
+              {hasPlan && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fade-in">
+                  <div className="space-y-1.5">
+                    <Label className={LABEL}>{t('athX.paymentDate')}</Label>
+                    <Input type="date" value={subPaymentDate} onChange={(e) => onPaymentDateChange(e.target.value)} className={FIELD} />
+                  </div>
+                  {editingLast && (
+                    <div className="space-y-1.5">
+                      <Label className={LABEL}>{tr('Date d’expiration', 'تاريخ الانتهاء')}</Label>
+                      <Input type="date" value={subExpiry} onChange={(e) => setSubExpiry(e.target.value)} className={FIELD} />
+                    </div>
+                  )}
+                </div>
+              )}
+              {hasPlan && <DiscountControl price={basePrice} value={discount} onChange={setDiscount} />}
             </Section>
           )}
 
@@ -448,17 +544,17 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
           )}
 
           {/* Payment summary: subscription + registration fee */}
-          {!isEdit && (selectedSub || feeDue > 0) && (
+          {(hasPlan || feeDue > 0) && (
             <div className="rounded-2xl border border-yellow-400/40 bg-gradient-to-br from-yellow-400/15 via-yellow-400/5 to-transparent p-4 space-y-2 animate-fade-in">
               <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-yellow-400">
                 <Receipt className="w-4 h-4" />{tr('Récapitulatif', 'الملخص')}
               </p>
-              {selectedSub && (
+              {hasPlan && (
                 <div className="flex justify-between text-sm text-zinc-300">
-                  <span>{selectedSub.name}</span><span>{formatDZD(basePrice)}</span>
+                  <span>{planName}</span><span>{formatDZD(basePrice)}</span>
                 </div>
               )}
-              {selectedSub && disc.discount > 0 && (
+              {hasPlan && disc.discount > 0 && (
                 <div className="flex justify-between text-sm text-emerald-400">
                   <span>{tr('Remise', 'تخفيض')}</span><span>-{formatDZD(disc.discount)}</span>
                 </div>
@@ -472,7 +568,15 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
                 <span>{tr('Total', 'المجموع')}</span><span className="text-yellow-400">{formatDZD(grandTotal)}</span>
               </div>
               <div className="flex items-center justify-between gap-3 text-sm">
-                <Label className="text-zinc-400">{t('athX.amountPaid')}</Label>
+                <Label className="text-zinc-400 flex items-center gap-2">
+                  {t('athX.amountPaid')}
+                  {collectedNow !== grandTotal && (
+                    <button type="button" onClick={() => setSubAmountPaid(String(grandTotal))}
+                            className="rounded-md border border-yellow-400/40 px-1.5 py-0.5 text-[10px] font-semibold text-yellow-400 hover:bg-yellow-400/10">
+                      {tr('Tout payer', 'دفع الكل')}
+                    </button>
+                  )}
+                </Label>
                 <Input type="number" min="0" step="0.01" value={subAmountPaid}
                        onChange={(e) => setSubAmountPaid(e.target.value)}
                        className={cn(FIELD, 'max-w-[180px] text-end text-yellow-300 font-semibold')} />
@@ -482,14 +586,6 @@ export const AthleteFormDialog: React.FC<Props> = ({ isOpen, onClose, athlete, o
                 <span className={cn('font-bold', totalRemaining > 0 ? 'text-red-400' : 'text-zinc-300')}>{formatDZD(totalRemaining)}</span>
               </div>
             </div>
-          )}
-
-          {/* Edit mode: the latest subscription can be corrected here */}
-          {isEdit && canSubscribe && lastSub && lastFields && (
-            <Section icon={<CalendarCheck className="w-4 h-4" />} title={tr('Dernier abonnement', 'آخر اشتراك')}
-                     hint={tr('Modifiez les informations du dernier abonnement créé.', 'عدّل معلومات آخر اشتراك تم إنشاؤه.')}>
-              <SubscriptionFields value={lastFields} onChange={setLastFields} />
-            </Section>
           )}
 
           {/* RFID is always the last field */}
